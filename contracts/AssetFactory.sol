@@ -5,14 +5,15 @@ import "./RemzikAssetToken.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract AssetFactory is Ownable {
-    event AssetTokenDeployed(address indexed tokenAddress, string title);
+    // UPDATED: Now includes name and symbol to match deployment needs
+    event AssetTokenDeployed(address indexed tokenAddress, string name, string symbol);
+    
     address public immutable registry;
 
     constructor(address _registry) Ownable(msg.sender) {
         registry = _registry;
     }
 
-    // This function must accept 5 arguments, and then pass 6 to the Token
     function deployAsset(
         string memory name,
         string memory symbol,
@@ -20,8 +21,6 @@ contract AssetFactory is Ownable {
         string memory metadataHash,
         address treasury
     ) external onlyOwner returns (address) {
-        // Here we pass 6 arguments:
-        // (1) name, (2) symbol, (3) supply, (4) metadataHash, (5) registry, (6) treasury
         RemzikAssetToken newToken = new RemzikAssetToken(
             name,
             symbol,
@@ -31,7 +30,9 @@ contract AssetFactory is Ownable {
             treasury
         );
         
-        emit AssetTokenDeployed(address(newToken), name);
+        // UPDATED: Now matches the new event signature
+        emit AssetTokenDeployed(address(newToken), name, symbol);
+        
         return address(newToken);
     }
 }
