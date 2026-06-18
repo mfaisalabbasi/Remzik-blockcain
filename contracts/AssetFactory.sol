@@ -5,8 +5,7 @@ import "./RemzikAssetToken.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract AssetFactory is Ownable {
-    // UPDATED: Now includes name and symbol to match deployment needs
-    event AssetTokenDeployed(address indexed tokenAddress, string name, string symbol);
+    event AssetTokenDeployed(address indexed tokenAddress, string name, string symbol, address indexed treasury);
     
     address public immutable registry;
 
@@ -30,8 +29,7 @@ contract AssetFactory is Ownable {
             treasury
         );
         
-        // UPDATED: Now matches the new event signature
-        emit AssetTokenDeployed(address(newToken), name, symbol);
+        emit AssetTokenDeployed(address(newToken), name, symbol, treasury);
         
         return address(newToken);
     }

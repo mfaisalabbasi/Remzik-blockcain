@@ -1,0 +1,49 @@
+{
+  "_format": "hh3-sol-build-info-1",
+  "id": "solc-0_8_28-3e43b8764569feae31549e53433aa4a06bf609dc",
+  "solcVersion": "0.8.28",
+  "solcLongVersion": "0.8.28+commit.7893614a",
+  "compilerType": "solc",
+  "toolVersions": {
+    "hardhat": "3.7.0"
+  },
+  "userSourceNameMap": {
+    "contracts/RemzikIdentityRegistry.sol": "project/contracts/RemzikIdentityRegistry.sol"
+  },
+  "input": {
+    "language": "Solidity",
+    "settings": {
+      "evmVersion": "cancun",
+      "optimizer": {
+        "enabled": true,
+        "runs": 200
+      },
+      "outputSelection": {
+        "*": {
+          "": [
+            "ast"
+          ],
+          "*": [
+            "abi",
+            "evm.bytecode.linkReferences",
+            "evm.bytecode.object",
+            "evm.bytecode.opcodes",
+            "evm.bytecode.sourceMap",
+            "evm.deployedBytecode.immutableReferences",
+            "evm.deployedBytecode.linkReferences",
+            "evm.deployedBytecode.object",
+            "evm.deployedBytecode.opcodes",
+            "evm.deployedBytecode.sourceMap",
+            "evm.methodIdentifiers"
+          ]
+        }
+      },
+      "remappings": []
+    },
+    "sources": {
+      "project/contracts/RemzikIdentityRegistry.sol": {
+        "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.28;\n\ncontract RemzikIdentityRegistry {\n    address public owner;\n\n    struct IdentityState {\n        bool isVerified;\n        bool isFrozen;\n    }\n\n    mapping(address => IdentityState) private _registry;\n\n    error UnauthorizedCaller(address caller);\n    error InvalidAddress();\n\n    event IdentityUpdated(address indexed investor, bool isVerified, address indexed authorizedBy);\n    event IdentityFreezeToggled(address indexed investor, bool isFrozen, address indexed authorizedBy);\n    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);\n\n    modifier onlyOwner() {\n        if (msg.sender != owner) revert UnauthorizedCaller(msg.sender);\n        _;\n    }\n\n    constructor() {\n        owner = msg.sender;\n        emit OwnershipTransferred(address(0), msg.sender);\n    }\n\n    function registerIdentity(address investor, bool status) external onlyOwner {\n        if (investor == address(0)) revert InvalidAddress();\n        _registry[investor].isVerified = status;\n        emit IdentityUpdated(investor, status, msg.sender);\n    }\n\n    function batchRegisterIdentity(address[] calldata investors, bool status) external onlyOwner {\n        for (uint256 i = 0; i < investors.length; i++) {\n            if (investors[i] == address(0)) revert InvalidAddress();\n            _registry[investors[i]].isVerified = status;\n            emit IdentityUpdated(investors[i], status, msg.sender);\n        }\n    }\n\n    function toggleFreeze(address investor, bool freezeStatus) external onlyOwner {\n        if (investor == address(0)) revert InvalidAddress();\n        _registry[investor].isFrozen = freezeStatus;\n        emit IdentityFreezeToggled(investor, freezeStatus, msg.sender);\n    }\n\n    function isClearToTrade(address investor) external view returns (bool) {\n        IdentityState memory state = _registry[investor];\n        if (state.isFrozen) return false;\n        return state.isVerified;\n    }\n\n    function getIdentityState(address investor) external view returns (bool verified, bool frozen) {\n        IdentityState memory state = _registry[investor];\n        return (state.isVerified, state.isFrozen);\n    }\n\n    function transferOwnership(address newOwner) external onlyOwner {\n        if (newOwner == address(0)) revert InvalidAddress();\n        emit OwnershipTransferred(owner, newOwner);\n        owner = newOwner;\n    }\n}"
+      }
+    }
+  }
+}

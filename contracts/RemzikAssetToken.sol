@@ -13,7 +13,8 @@ contract RemzikAssetToken is ERC20, AccessControl {
     IIdentityRegistry public immutable registry;
     string public metadataHash;
 
-    // Must match the 6 arguments from AssetFactory
+    event MetadataUpdated(string newHash);
+
     constructor(
         string memory name,
         string memory symbol,
@@ -29,6 +30,11 @@ contract RemzikAssetToken is ERC20, AccessControl {
         _grantRole(COMPLIANCE_BYPASS_ROLE, _treasury);
         
         _mint(_treasury, supply);
+    }
+
+    function setMetadataHash(string memory newHash) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        metadataHash = newHash;
+        emit MetadataUpdated(newHash);
     }
 
     function _update(address from, address to, uint256 value) internal override {
