@@ -23,6 +23,9 @@ export default defineConfig({
     hardhatMainnet: {
       type: "edr-simulated",
       chainType: "l1",
+      accounts: {
+        mnemonic: "test test test test test test test test test test test junk",
+      },
     },
     hardhatOp: {
       type: "edr-simulated",
