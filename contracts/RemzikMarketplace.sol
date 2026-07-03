@@ -19,68 +19,73 @@ contract RemzikMarketplace is Ownable, ReentrancyGuard {
         bool active;
     }
 
+    // Mapping: listingId => Listing
     mapping(string => Listing) public listings;
 
+    // Events for Backend Indexer
     event ListingCreated(string indexed listingId, address indexed seller, address token, uint256 amount);
     event ListingCancelled(string indexed listingId, address indexed seller);
-    event TradeExecuted(bytes32 indexed txId, address indexed seller, address indexed buyer, address token, uint256 amount, uint256 price);
+    event TradeExecuted(string indexed listingId, address indexed seller, address indexed buyer, uint256 amount);
 
     constructor(address _registry) Ownable(msg.sender) {
         require(_registry != address(0), "Registry cannot be zero address");
         registry = IIdentityRegistry(_registry);
     }
 
+    // --- LISTING LOGIC ---
+
     /**
-     * @dev Sellers list their own assets directly. Backend no longer manages nonces.
+     * @notice Allows a verified user to list assets. 
+     * Seller must have pre-approved this contract via token.approve().
      */
-    function createListing(
-        string calldata listingId, 
-        address token, 
-        uint256 amount
-    ) external nonReentrant {
+    function createListing(string calldata listingId, address token, uint256 amount) external nonReentrant {
         require(listings[listingId].seller == address(0), "Listing ID already exists");
-        require(registry.isClearToTrade(msg.sender), "Seller not verified in registry");
+        require(registry.isClearToTrade(msg.sender), "Seller not verified");
         require(IERC20(token).allowance(msg.sender, address(this)) >= amount, "Insufficient allowance");
         
         listings[listingId] = Listing(msg.sender, token, amount, true);
-        
         emit ListingCreated(listingId, msg.sender, token, amount);
     }
 
+    /**
+     * @notice Allows seller or owner to cancel an active listing.
+     */
     function cancelListing(string calldata listingId) external nonReentrant {
         Listing storage listing = listings[listingId];
-        require(listing.active, "Listing is not active");
+        require(listing.active, "Listing not active");
         require(msg.sender == listing.seller || msg.sender == owner(), "Unauthorized");
 
         listing.active = false;
         emit ListingCancelled(listingId, listing.seller);
     }
 
+    // --- OWNERSHIP SETTLEMENT LOGIC ---
+
     /**
-     * @dev Buyers execute trades directly.
+     * @notice Atomic settlement called by backend admin.
+     * Moves assets directly from Seller to Buyer.
      */
-    function executeTrade(
+    function settleTrade(
         string calldata listingId, 
-        uint256 price
-    ) external nonReentrant returns (bytes32) {
+        address seller, 
+        address buyer
+    ) external nonReentrant onlyOwner { 
         Listing storage listing = listings[listingId];
+        
+        // 1. Validation
         require(listing.active, "Listing not active");
+        require(listing.seller == seller, "Seller address mismatch");
         
-        address seller = listing.seller;
-        address token = listing.token;
-        uint256 amount = listing.amount;
+        // 2. Perform Atomic Transfer
+        listing.active = false;
+        bool success = IERC20(listing.token).transferFrom(seller, buyer, listing.amount);
+        require(success, "Ownership transfer failed");
 
-        listing.active = false; 
-
-        // Execute transfer from seller to buyer (msg.sender)
-        bool success = IERC20(token).transferFrom(seller, msg.sender, amount);
-        require(success, "Token transfer failed");
-
-        bytes32 txId = keccak256(abi.encodePacked(listingId, msg.sender, block.timestamp));
-        emit TradeExecuted(txId, seller, msg.sender, token, amount, price);
-        
-        return txId;
+        // 3. Emit event for backend audit
+        emit TradeExecuted(listingId, seller, buyer, listing.amount);
     }
+
+    // --- HELPERS ---
 
     function isListingActive(string calldata listingId) external view returns (bool) {
         return listings[listingId].active;
