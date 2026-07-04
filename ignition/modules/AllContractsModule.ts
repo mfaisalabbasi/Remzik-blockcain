@@ -5,13 +5,15 @@ export default buildModule("AllContracts", (m) => {
   const registry = m.contract("RemzikIdentityRegistry", []);
 
   // 2. Deploy the Asset Factory (The Producer)
-  // Needs registry for verifying users during asset creation
   const factory = m.contract("AssetFactory", [registry]);
 
   // 3. Deploy the Marketplace (The Executor)
-  // Needs registry to check if buyer/seller are verified before trading
   const marketplace = m.contract("RemzikMarketplace", [registry]);
 
-  // Return all three
-  return { registry, factory, marketplace };
+  // 4. Deploy the Yield Notary (The Auditor)
+  // This records the "fingerprint" of financial distributions
+  const yieldNotary = m.contract("YieldNotary", []);
+
+  // Return all four
+  return { registry, factory, marketplace, yieldNotary };
 });

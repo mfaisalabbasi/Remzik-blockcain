@@ -1,0 +1,49 @@
+{
+  "_format": "hh3-sol-build-info-1",
+  "id": "solc-0_8_28-15ef629e766fb1e1fba6b60f2868d02157b40e36",
+  "solcVersion": "0.8.28",
+  "solcLongVersion": "0.8.28+commit.7893614a",
+  "compilerType": "solc",
+  "toolVersions": {
+    "hardhat": "3.7.0"
+  },
+  "userSourceNameMap": {
+    "contracts/YieldNotary.sol": "project/contracts/YieldNotary.sol"
+  },
+  "input": {
+    "language": "Solidity",
+    "settings": {
+      "evmVersion": "cancun",
+      "optimizer": {
+        "enabled": true,
+        "runs": 200
+      },
+      "outputSelection": {
+        "*": {
+          "": [
+            "ast"
+          ],
+          "*": [
+            "abi",
+            "evm.bytecode.linkReferences",
+            "evm.bytecode.object",
+            "evm.bytecode.opcodes",
+            "evm.bytecode.sourceMap",
+            "evm.deployedBytecode.immutableReferences",
+            "evm.deployedBytecode.linkReferences",
+            "evm.deployedBytecode.object",
+            "evm.deployedBytecode.opcodes",
+            "evm.deployedBytecode.sourceMap",
+            "evm.methodIdentifiers"
+          ]
+        }
+      },
+      "remappings": []
+    },
+    "sources": {
+      "project/contracts/YieldNotary.sol": {
+        "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\n\ncontract YieldNotary {\n    address public owner;\n    event YieldRecorded(bytes32 indexed batchId, address indexed property, uint256 amount, uint256 timestamp);\n\n    constructor() { owner = msg.sender; }\n\n    function recordYield(bytes32 _batchId, address _property, uint256 _amount) external {\n        require(msg.sender == owner, \"Only admin\");\n        emit YieldRecorded(_batchId, _property, _amount, block.timestamp);\n    }\n}"
+      }
+    }
+  }
+}
