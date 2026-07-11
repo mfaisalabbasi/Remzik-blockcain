@@ -1,19 +1,21 @@
+// ignition/modules/AllContracts.ts
 import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
 
 export default buildModule("AllContracts", (m) => {
-  // 1. Deploy the Identity Registry (The Gatekeeper)
+  // 1. Deploy Registry
   const registry = m.contract("RemzikIdentityRegistry", []);
 
-  // 2. Deploy the Asset Factory (The Producer)
+  // 2. Deploy Price Oracle (The new Guardrail)
+  const priceOracle = m.contract("PriceOracle", []);
+
+  // 3. Deploy Asset Factory
   const factory = m.contract("AssetFactory", [registry]);
 
-  // 3. Deploy the Marketplace (The Executor)
-  const marketplace = m.contract("RemzikMarketplace", [registry]);
+  // 4. Deploy Marketplace (Now linked to Registry AND Oracle)
+  const marketplace = m.contract("RemzikMarketplace", [registry, priceOracle]);
 
-  // 4. Deploy the Yield Notary (The Auditor)
-  // This records the "fingerprint" of financial distributions
+  // 5. Deploy Yield Notary
   const yieldNotary = m.contract("YieldNotary", []);
 
-  // Return all four
-  return { registry, factory, marketplace, yieldNotary };
+  return { registry, priceOracle, factory, marketplace, yieldNotary };
 });
