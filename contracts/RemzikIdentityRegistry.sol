@@ -10,12 +10,16 @@ contract RemzikIdentityRegistry {
     }
 
     mapping(address => IdentityState) private _registry;
+    
+    // SYSTEM WALLETS: Automatically bypass standard KYC/verification checks
+    mapping(address => bool) public isSystemWallet;
 
     error UnauthorizedCaller(address caller);
     error InvalidAddress();
 
     event IdentityUpdated(address indexed investor, bool isVerified, address indexed authorizedBy);
     event IdentityFreezeToggled(address indexed investor, bool isFrozen, address indexed authorizedBy);
+    event SystemWalletUpdated(address indexed wallet, bool status, address indexed authorizedBy);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     modifier onlyOwner() {
@@ -25,6 +29,10 @@ contract RemzikIdentityRegistry {
 
     constructor() {
         owner = msg.sender;
+        
+        // Automatically whitelist the contract deployer as a system wallet
+        isSystemWallet[msg.sender] = true;
+        
         emit OwnershipTransferred(address(0), msg.sender);
     }
 
@@ -48,13 +56,26 @@ contract RemzikIdentityRegistry {
         emit IdentityFreezeToggled(investor, freezeStatus, msg.sender);
     }
 
+    /// @notice Allows the owner to designate infrastructure wallets (like Treasuries or Factories)
+    function setSystemWallet(address wallet, bool status) external onlyOwner {
+        if (wallet == address(0)) revert InvalidAddress();
+        isSystemWallet[wallet] = status;
+        emit SystemWalletUpdated(wallet, status, msg.sender);
+    }
+
     function isClearToTrade(address investor) external view returns (bool) {
+        // System wallets automatically bypass standard compliance rules
+        if (isSystemWallet[investor]) return true;
+
         IdentityState memory state = _registry[investor];
         if (state.isFrozen) return false;
         return state.isVerified;
     }
 
     function getIdentityState(address investor) external view returns (bool verified, bool frozen) {
+        if (isSystemWallet[investor]) {
+            return (true, false);
+        }
         IdentityState memory state = _registry[investor];
         return (state.isVerified, state.isFrozen);
     }

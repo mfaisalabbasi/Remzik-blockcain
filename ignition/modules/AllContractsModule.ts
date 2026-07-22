@@ -2,20 +2,36 @@
 import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
 
 export default buildModule("AllContracts", (m) => {
-  // 1. Deploy Registry
+  // 1. Deploy Identity Registry
   const registry = m.contract("RemzikIdentityRegistry", []);
 
-  // 2. Deploy Price Oracle (The new Guardrail)
+  // 2. Deploy Price Oracle
   const priceOracle = m.contract("PriceOracle", []);
 
-  // 3. Deploy Asset Factory
-  const factory = m.contract("AssetFactory", [registry]);
+  // 3. Deploy Micro-Deployer Utility Contracts (Required for Asset Pod bytecode injection)
+  const tokenDeployer = m.contract("TokenDeployer", []);
+  const govDeployer = m.contract("GovDeployer", []);
 
-  // 4. Deploy Marketplace (Now linked to Registry AND Oracle)
+  // 4. Deploy Asset Factory (Linked to Registry, TokenDeployer, and GovDeployer)
+  const factory = m.contract("AssetFactory", [
+    registry,
+    tokenDeployer,
+    govDeployer,
+  ]);
+
+  // 5. Deploy Marketplace (Linked to Registry and Oracle)
   const marketplace = m.contract("RemzikMarketplace", [registry, priceOracle]);
 
-  // 5. Deploy Yield Notary
+  // 6. Deploy Yield Notary
   const yieldNotary = m.contract("YieldNotary", []);
 
-  return { registry, priceOracle, factory, marketplace, yieldNotary };
+  return {
+    registry,
+    priceOracle,
+    tokenDeployer,
+    govDeployer,
+    factory,
+    marketplace,
+    yieldNotary,
+  };
 });
