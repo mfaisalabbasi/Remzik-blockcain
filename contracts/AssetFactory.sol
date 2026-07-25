@@ -57,20 +57,15 @@ contract AssetFactory is Ownable {
         address /* admin */
     ) external onlyOwner returns (address, address, address) {
         
-        // Note: Ensure your backend encoding includes address(this) as the 7th parameter (admin) 
-        // for the token constructor so the factory receives DEFAULT_ADMIN_ROLE.
-        
         // 1. Deploy Token dynamically
         address newToken = ITokenDeployer(tokenDeployer).deployToken(tokenCreationCode, tokenArgs);
         
-        // 2. Deploy Governance dynamically using creation code and args
+        // 2. Deploy Governance dynamically
         address newGovernance = IGovDeployer(govDeployer).deployGovernance(govCreationCode, govArgs);
         
-        // 3. BONDING: Grant Governance role (Now works because factory is admin)
-        IRemzikAssetToken(newToken).grantRole(
-            IRemzikAssetToken(newToken).GOVERNANCE_ROLE(), 
-            newGovernance
-        );
+        // 3. BONDING: Grant Governance role to the PropertyGovernance contract
+        bytes32 govRole = IRemzikAssetToken(newToken).GOVERNANCE_ROLE();
+        IRemzikAssetToken(newToken).grantRole(govRole, newGovernance);
         
         emit AssetPodDeployed(newToken, treasury, newGovernance, name);
         

@@ -5,7 +5,7 @@ async function main() {
   const { ethers } = connection;
 
   const [sender] = await ethers.getSigners();
-  const target = "0xde28a31626B887af801aCC1809753c27e5310C47";
+  const target = "0xDec0fDb43441134b8cE381173b4fC5944b1afBca";
 
   console.log(`Funding ${target} from ${sender.address}...`);
 

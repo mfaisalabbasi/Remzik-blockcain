@@ -4,10 +4,6 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 
-/**
- * @title PropertyGovernance
- * @dev Manages operational proposals and triggers emergency liquidation for an asset pod.
- */
 contract PropertyGovernance is Ownable {
     struct Proposal {
         string description;
@@ -42,7 +38,12 @@ contract PropertyGovernance is Ownable {
         token = ERC20Votes(_token);
     }
 
-    // 1. Create a proposal (e.g., "BUYOUT", "RENOVATION")
+    function setToken(address _token) external {
+        require(msg.sender == factory || msg.sender == owner(), "Unauthorized");
+        require(address(token) == address(0), "Governance: Token already linked");
+        token = ERC20Votes(_token);
+    }
+
     function createProposal(string memory _description, uint256 _duration) external onlyOwner {
         proposalCount++;
         proposals[proposalCount] = Proposal({
@@ -56,7 +57,6 @@ contract PropertyGovernance is Ownable {
         emit ProposalCreated(proposalCount, _description, block.timestamp + _duration);
     }
 
-    // 2. Investors vote using their delegated token balance
     function vote(uint256 _proposalId, bool _support) external {
         Proposal storage p = proposals[_proposalId];
         require(p.exists, "Proposal: Does not exist");
@@ -73,23 +73,50 @@ contract PropertyGovernance is Ownable {
         emit Voted(_proposalId, msg.sender, _support, weight);
     }
 
-    // 3. Execute action based on majority
-    function executeProposal(uint256 _proposalId) external onlyOwner {
+    // REMOVED onlyOwner so execution can be called by anyone once conditions are met
+    function executeProposal(uint256 _proposalId) external {
         Proposal storage p = proposals[_proposalId];
+        require(p.exists, "Proposal: Does not exist");
         require(block.timestamp >= p.deadline, "Proposal: Still active");
         require(!p.executed, "Proposal: Already executed");
         require(p.voteYes > p.voteNo, "Proposal: Majority not reached");
 
         p.executed = true;
         
-        // If it's a liquidation proposal, trigger the token kill-switch
         if (keccak256(bytes(p.description)) == keccak256(bytes("LIQUIDATE"))) {
-            // This requires the contract to have GOVERNANCE_ROLE on the Token
-            (bool success, ) = address(token).call(abi.encodeWithSignature("activateLiquidation()"));
-            require(success, "Governance: Liquidation failed");
+            require(address(token) != address(0), "Governance: Token not linked");
+            (bool success, bytes memory returndata) = address(token).call(abi.encodeWithSignature("activateLiquidation()"));
+            if (!success) {
+                if (returndata.length > 0) {
+                    assembly {
+                        let returndata_size := mload(returndata)
+                        revert(add(32, returndata), returndata_size)
+                    }
+                } else {
+                    revert("Governance: Liquidation failed");
+                }
+            }
             emit LiquidationActivated(address(token));
         }
         
         emit ProposalExecuted(_proposalId, p.description);
+    }
+
+    // 🚨 EMERGENCY DIRECT KILL-SWITCH (Bypasses voting delay for instant liquidation)
+    function emergencyLiquidate() external onlyOwner {
+        require(address(token) != address(0), "Governance: Token not linked");
+        
+        (bool success, bytes memory returndata) = address(token).call(abi.encodeWithSignature("activateLiquidation()"));
+        if (!success) {
+            if (returndata.length > 0) {
+                assembly {
+                    let returndata_size := mload(returndata)
+                    revert(add(32, returndata), returndata_size)
+                }
+            } else {
+                revert("Governance: Liquidation failed");
+            }
+        }
+        emit LiquidationActivated(address(token));
     }
 }

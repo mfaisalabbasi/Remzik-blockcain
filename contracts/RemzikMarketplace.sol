@@ -16,7 +16,7 @@ interface IPriceOracle {
 
 /**
  * @title RemzikMarketplace
- * @notice Production version: Includes Balance Checks + Allowance Gating + Price Banding.
+ * @notice Production version: Includes Balance Checks + Allowance Gating + Price Banding + Strict Liquidation Shield.
  */
 contract RemzikMarketplace is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -88,12 +88,18 @@ contract RemzikMarketplace is Ownable, ReentrancyGuard {
         address seller, 
         address buyer,
         uint256 tradePrice 
-    ) external nonReentrant onlyOwner { 
+    ) external nonReentrant { 
         Listing storage listing = listings[listingId];
         
         require(listing.active, "Listing inactive");
         require(listing.seller == seller, "Seller mismatch");
         require(buyer != address(0), "Invalid buyer");
+        
+        // 🛡️ HARD GUARD: Strict verification to completely block secondary trades during liquidation/pause
+        (bool success, bytes memory data) = listing.token.staticcall(abi.encodeWithSignature("paused()"));
+        require(success, "Marketplace: Failed to check token pause status");
+        bool isPaused = abi.decode(data, (bool));
+        require(!isPaused, "Marketplace: Token is paused due to emergency liquidation");
         
         _checkPriceBand(listing.token, tradePrice, listing.amount); 
         
