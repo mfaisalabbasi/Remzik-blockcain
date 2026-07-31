@@ -2,6 +2,9 @@
 import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
 
 export default buildModule("AllContracts", (m) => {
+  // Get the default deployer/admin account
+  const deployer = m.getAccount(0);
+
   // 1. Deploy Identity Registry
   const registry = m.contract("RemzikIdentityRegistry", []);
 
@@ -12,9 +15,13 @@ export default buildModule("AllContracts", (m) => {
   const tokenDeployer = m.contract("TokenDeployer", []);
   const govDeployer = m.contract("GovDeployer", []);
 
-  // 4. Deploy Asset Factory (Linked to Registry, TokenDeployer, and GovDeployer)
+  // 7. Deploy Recovery Manager (Phase 10: Linked to Identity Registry and Admin)
+  const recoveryManager = m.contract("RecoveryManager", [registry, deployer]);
+
+  // 4. Deploy Asset Factory (Linked to Registry, RecoveryManager, TokenDeployer, and GovDeployer)
   const factory = m.contract("AssetFactory", [
     registry,
+    recoveryManager,
     tokenDeployer,
     govDeployer,
   ]);
@@ -25,6 +32,9 @@ export default buildModule("AllContracts", (m) => {
   // 6. Deploy Yield Notary
   const yieldNotary = m.contract("YieldNotary", []);
 
+  // 8. Bind RecoveryManager to Identity Registry so it has authorization to update verification statuses atomically
+  m.call(registry, "setRecoveryManager", [recoveryManager]);
+
   return {
     registry,
     priceOracle,
@@ -33,5 +43,6 @@ export default buildModule("AllContracts", (m) => {
     factory,
     marketplace,
     yieldNotary,
+    recoveryManager,
   };
 });

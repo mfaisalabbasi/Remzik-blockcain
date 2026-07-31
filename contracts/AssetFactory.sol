@@ -14,6 +14,7 @@ interface IGovDeployer {
 interface IRemzikAssetToken {
     function grantRole(bytes32 role, address account) external;
     function GOVERNANCE_ROLE() external view returns (bytes32);
+    function RECOVERY_ROLE() external view returns (bytes32);
 }
 
 interface IPropertyGovernance {
@@ -29,15 +30,18 @@ contract AssetFactory is Ownable {
     );
     
     address public immutable registry;
+    address public immutable recoveryManager;
     address public tokenDeployer;
     address public govDeployer;
 
     constructor(
         address _registry,
+        address _recoveryManager,
         address _tokenDeployer,
         address _govDeployer
     ) Ownable(msg.sender) {
         registry = _registry;
+        recoveryManager = _recoveryManager;
         tokenDeployer = _tokenDeployer;
         govDeployer = _govDeployer;
     }
@@ -66,6 +70,10 @@ contract AssetFactory is Ownable {
         // 3. BONDING: Grant Governance role to the PropertyGovernance contract
         bytes32 govRole = IRemzikAssetToken(newToken).GOVERNANCE_ROLE();
         IRemzikAssetToken(newToken).grantRole(govRole, newGovernance);
+
+        // 4. BONDING: Automatically grant RECOVERY_ROLE to the RecoveryManager contract
+        bytes32 recoveryRole = IRemzikAssetToken(newToken).RECOVERY_ROLE();
+        IRemzikAssetToken(newToken).grantRole(recoveryRole, recoveryManager);
         
         emit AssetPodDeployed(newToken, treasury, newGovernance, name);
         
