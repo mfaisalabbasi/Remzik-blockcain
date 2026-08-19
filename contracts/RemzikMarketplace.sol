@@ -3,8 +3,9 @@ pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 interface IIdentityRegistry {
     function isClearToTrade(address account) external view returns (bool);
@@ -16,12 +17,12 @@ interface IPriceOracle {
 
 /**
  * @title RemzikMarketplace
- * @notice Production version: Includes Balance Checks + Allowance Gating + Price Banding + Strict Liquidation Shield.
+ * @notice UUPS Upgradeable production version: Balance Checks + Allowance Gating + Price Banding + Strict Liquidation Shield.
  */
-contract RemzikMarketplace is Ownable, ReentrancyGuard {
+contract RemzikMarketplace is Initializable, UUPSUpgradeable, OwnableUpgradeable {
     using SafeERC20 for IERC20;
 
-    IIdentityRegistry public immutable registry;
+    IIdentityRegistry public registry;
     IPriceOracle public priceOracle;
 
     struct Listing {
@@ -33,15 +34,41 @@ contract RemzikMarketplace is Ownable, ReentrancyGuard {
 
     mapping(string => Listing) public listings;
 
+    // Custom reentrancy guard states for upgradeable safety
+    uint256 private _status;
+    uint256 private constant _NOT_ENTERED = 1;
+    uint256 private constant _ENTERED = 2;
+
     event ListingCreated(string indexed listingId, address indexed seller, address token, uint256 amount);
     event ListingCancelled(string indexed listingId, address indexed seller);
     event TradeExecuted(string indexed listingId, address indexed seller, address indexed buyer, uint256 amount);
 
-    constructor(address _registry, address _priceOracle) Ownable(msg.sender) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(
+        address _registry, 
+        address _priceOracle,
+        address initialOwner
+    ) external initializer {
         require(_registry != address(0), "Registry cannot be zero address");
         require(_priceOracle != address(0), "Oracle cannot be zero address");
+
+        __Ownable_init(initialOwner);
+        _status = _NOT_ENTERED;
+
         registry = IIdentityRegistry(_registry);
         priceOracle = IPriceOracle(_priceOracle);
+    }
+
+    // --- CUSTOM REENTRANCY MODIFIER ---
+    modifier nonReentrant() {
+        require(_status != _ENTERED, "ReentrancyGuard: reentrant call");
+        _status = _ENTERED;
+        _;
+        _status = _NOT_ENTERED;
     }
 
     // --- INTERNAL GUARDRAILS ---
@@ -63,10 +90,7 @@ contract RemzikMarketplace is Ownable, ReentrancyGuard {
         require(listings[listingId].seller == address(0), "Listing exists");
         require(registry.isClearToTrade(msg.sender), "Seller not verified");
         
-        // SECURITY UPDATE: Check actual token balance to prevent listing what you don't own
         require(IERC20(token).balanceOf(msg.sender) >= amount, "Insufficient token balance");
-        
-        // Verify allowance (supports MaxUint256)
         require(IERC20(token).allowance(msg.sender, address(this)) >= amount, "Insufficient allowance");
         
         listings[listingId] = Listing(msg.sender, token, amount, true);
@@ -95,7 +119,6 @@ contract RemzikMarketplace is Ownable, ReentrancyGuard {
         require(listing.seller == seller, "Seller mismatch");
         require(buyer != address(0), "Invalid buyer");
         
-        // 🛡️ HARD GUARD: Strict verification to completely block secondary trades during liquidation/pause
         (bool success, bytes memory data) = listing.token.staticcall(abi.encodeWithSignature("paused()"));
         require(success, "Marketplace: Failed to check token pause status");
         bool isPaused = abi.decode(data, (bool));
@@ -105,7 +128,6 @@ contract RemzikMarketplace is Ownable, ReentrancyGuard {
         
         listing.active = false;
         
-        // Transfer from seller to buyer
         IERC20(listing.token).safeTransferFrom(seller, buyer, listing.amount);
 
         emit TradeExecuted(listingId, seller, buyer, listing.amount);
@@ -120,4 +142,10 @@ contract RemzikMarketplace is Ownable, ReentrancyGuard {
         require(_newOracle != address(0), "Invalid address");
         priceOracle = IPriceOracle(_newOracle);
     }
+
+    // --- UUPS AUTHORIZATION ---
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+
+    // Storage gap for future upgrades safety
+    uint256[48] private __gap;
 }

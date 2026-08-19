@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 interface IERC3643AssetToken {
     function forcedTransfer(address from, address to, uint256 amount) external returns (bool);
@@ -12,7 +14,11 @@ interface IIdentityRegistry {
     function setVerificationStatus(address userAddress, bool status) external;
 }
 
-contract RecoveryManager is AccessControl {
+/**
+ * @title RecoveryManager
+ * @notice UUPS Upgradeable production version for atomic wallet recovery and identity compliance updates.
+ */
+contract RecoveryManager is Initializable, UUPSUpgradeable, AccessControlUpgradeable {
     bytes32 public constant AGENT_ROLE = keccak256("AGENT_ROLE");
 
     address public identityRegistry;
@@ -25,8 +31,17 @@ contract RecoveryManager is AccessControl {
         uint256 timestamp
     );
 
-    constructor(address _identityRegistry, address admin) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address _identityRegistry, address admin) external initializer {
         require(_identityRegistry != address(0), "Invalid registry address");
+        require(admin != address(0), "Invalid admin address");
+
+        __AccessControl_init();
+
         identityRegistry = _identityRegistry;
         
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
@@ -49,8 +64,6 @@ contract RecoveryManager is AccessControl {
         require(oldWallet != newWallet, "Same wallet address");
 
         // 1. Execute the token transfer via ERC-3643 forced transfer mechanism.
-        // If this fails or reverts, the entire transaction rolls back automatically,
-        // ensuring the old wallet remains active and untouched.
         bool success = IERC3643AssetToken(tokenAddress).forcedTransfer(oldWallet, newWallet, amount);
         require(success, "Forced token transfer failed");
 
@@ -66,4 +79,10 @@ contract RecoveryManager is AccessControl {
         require(newRegistry != address(0), "Invalid registry address");
         identityRegistry = newRegistry;
     }
+
+    // --- UUPS AUTHORIZATION ---
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+
+    // Storage gap for future upgrades safety
+    uint256[48] private __gap;
 }

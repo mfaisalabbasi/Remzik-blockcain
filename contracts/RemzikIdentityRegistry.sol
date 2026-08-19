@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-contract RemzikIdentityRegistry {
-    address public owner;
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+
+contract RemzikIdentityRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable {
     address public recoveryManager; // Phase 10: Authorized RecoveryManager contract address
 
     struct IdentityState {
@@ -21,27 +24,24 @@ contract RemzikIdentityRegistry {
     event IdentityUpdated(address indexed investor, bool isVerified, address indexed authorizedBy);
     event IdentityFreezeToggled(address indexed investor, bool isFrozen, address indexed authorizedBy);
     event SystemWalletUpdated(address indexed wallet, bool status, address indexed authorizedBy);
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-    event RecoveryManagerUpdated(address indexed newRecoveryManager, address indexed authorizedBy); // Phase 10 event
-
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert UnauthorizedCaller(msg.sender);
-        _;
-    }
+    event RecoveryManagerUpdated(address indexed newRecoveryManager, address indexed authorizedBy);
 
     // Phase 10: Modifier allowing either the owner or the authorized RecoveryManager contract to update status atomically
     modifier onlyAuthorizedRecovery() {
-        if (msg.sender != owner && msg.sender != recoveryManager) revert UnauthorizedCaller(msg.sender);
+        if (msg.sender != owner() && msg.sender != recoveryManager) revert UnauthorizedCaller(msg.sender);
         _;
     }
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
-        owner = msg.sender;
+        _disableInitializers();
+    }
+
+    function initialize() external initializer {
+        __Ownable_init(msg.sender);
         
         // Automatically whitelist the contract deployer as a system wallet
         isSystemWallet[msg.sender] = true;
-        
-        emit OwnershipTransferred(address(0), msg.sender);
     }
 
     function registerIdentity(address investor, bool status) external onlyOwner {
@@ -102,9 +102,9 @@ contract RemzikIdentityRegistry {
         return (state.isVerified, state.isFrozen);
     }
 
-    function transferOwnership(address newOwner) external onlyOwner {
-        if (newOwner == address(0)) revert InvalidAddress();
-        emit OwnershipTransferred(owner, newOwner);
-        owner = newOwner;
-    }
+    // Required by UUPSUpgradeable
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+
+    // Storage gap for future upgrades safety
+    uint256[49] private __gap;
 }

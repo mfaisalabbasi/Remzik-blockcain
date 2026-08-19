@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
 interface ITokenDeployer {
     function deployToken(bytes memory creationCode, bytes memory constructorArgs) external returns (address);
@@ -21,25 +23,34 @@ interface IPropertyGovernance {
     function transferOwnership(address newOwner) external;
 }
 
-contract AssetFactory is Ownable {
+contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, OwnableUpgradeable {
     event AssetPodDeployed(
         address indexed tokenAddress,
         address indexed treasuryAddress,
         address indexed governanceAddress,
         string name
     );
-    
-    address public immutable registry;
-    address public immutable recoveryManager;
+
+    // State variables (Must maintain order in future upgrades)
+    address public registry;
+    address public recoveryManager;
     address public tokenDeployer;
     address public govDeployer;
 
-    constructor(
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(
         address _registry,
         address _recoveryManager,
         address _tokenDeployer,
-        address _govDeployer
-    ) Ownable(msg.sender) {
+        address _govDeployer,
+        address initialOwner
+    ) external initializer {
+        __Ownable_init(initialOwner);
+
         registry = _registry;
         recoveryManager = _recoveryManager;
         tokenDeployer = _tokenDeployer;
@@ -60,13 +71,13 @@ contract AssetFactory is Ownable {
         address treasury,
         address /* admin */
     ) external onlyOwner returns (address, address, address) {
-        
+
         // 1. Deploy Token dynamically
         address newToken = ITokenDeployer(tokenDeployer).deployToken(tokenCreationCode, tokenArgs);
-        
+
         // 2. Deploy Governance dynamically
         address newGovernance = IGovDeployer(govDeployer).deployGovernance(govCreationCode, govArgs);
-        
+
         // 3. BONDING: Grant Governance role to the PropertyGovernance contract
         bytes32 govRole = IRemzikAssetToken(newToken).GOVERNANCE_ROLE();
         IRemzikAssetToken(newToken).grantRole(govRole, newGovernance);
@@ -74,13 +85,16 @@ contract AssetFactory is Ownable {
         // 4. BONDING: Automatically grant RECOVERY_ROLE to the RecoveryManager contract
         bytes32 recoveryRole = IRemzikAssetToken(newToken).RECOVERY_ROLE();
         IRemzikAssetToken(newToken).grantRole(recoveryRole, recoveryManager);
-        
+
         emit AssetPodDeployed(newToken, treasury, newGovernance, name);
-        
+
         return (newToken, treasury, newGovernance);
     }
 
     function transferGovernanceOwnership(address govAddress, address newOwner) external onlyOwner {
         IPropertyGovernance(govAddress).transferOwnership(newOwner);
     }
+
+    // Required by UUPS standard to authorize code upgrades
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 }
