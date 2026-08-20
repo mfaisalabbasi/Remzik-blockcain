@@ -79,7 +79,7 @@ async function main() {
       recoveryManagerAddress,
       tokenDeployerAddress,
       govDeployerAddress,
-      deployer.address, // initialOwner
+      deployer.address, // initialAdmin
     ],
     {
       initializer: "initialize",
@@ -117,13 +117,22 @@ async function main() {
   const yieldNotaryAddress = await yieldNotary.getAddress();
   console.log("-> YieldNotary deployed to:", yieldNotaryAddress);
 
-  // 9. Bind RecoveryManager inside the Identity Registry Proxy
+  // 9. Post-Deployment Configuration & RBAC Bindings
   console.log("\n--- Post-Deployment Configuration ---");
-  const tx = await registry.setRecoveryManager(recoveryManagerAddress);
+
+  // Bind RecoveryManager inside Identity Registry
+  let tx = await registry.setRecoveryManager(recoveryManagerAddress);
   await tx.wait();
   console.log(
     "-> RecoveryManager bound to IdentityRegistry Proxy successfully!",
   );
+
+  // OPTIONAL: If you have separate backend wallets for services, you can grant roles here:
+  // const KYC_MANAGER_ROLE = await registry.KYC_MANAGER_ROLE();
+  // const backendKycWallet = "0xYourBackendWalletAddress";
+  // tx = await registry.grantRole(KYC_MANAGER_ROLE, backendKycWallet);
+  // await tx.wait();
+  // console.log("-> Granted KYC_MANAGER_ROLE to backend wallet");
 
   // --- SUMMARY ---
   console.log("\n=======================================");

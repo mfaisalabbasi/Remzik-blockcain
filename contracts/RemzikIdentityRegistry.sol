@@ -3,9 +3,12 @@ pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 
-contract RemzikIdentityRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable {
+contract RemzikIdentityRegistry is Initializable, UUPSUpgradeable, AccessControlUpgradeable {
+    bytes32 public constant KYC_MANAGER_ROLE = keccak256("KYC_MANAGER_ROLE");
+    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+
     address public recoveryManager; // Phase 10: Authorized RecoveryManager contract address
 
     struct IdentityState {
@@ -26,9 +29,9 @@ contract RemzikIdentityRegistry is Initializable, UUPSUpgradeable, OwnableUpgrad
     event SystemWalletUpdated(address indexed wallet, bool status, address indexed authorizedBy);
     event RecoveryManagerUpdated(address indexed newRecoveryManager, address indexed authorizedBy);
 
-    // Phase 10: Modifier allowing either the owner or the authorized RecoveryManager contract to update status atomically
+    // Phase 10: Modifier allowing either the DEFAULT_ADMIN_ROLE or the authorized RecoveryManager contract
     modifier onlyAuthorizedRecovery() {
-        if (msg.sender != owner() && msg.sender != recoveryManager) revert UnauthorizedCaller(msg.sender);
+        if (!hasRole(DEFAULT_ADMIN_ROLE, msg.sender) && msg.sender != recoveryManager) revert UnauthorizedCaller(msg.sender);
         _;
     }
 
@@ -38,19 +41,24 @@ contract RemzikIdentityRegistry is Initializable, UUPSUpgradeable, OwnableUpgrad
     }
 
     function initialize() external initializer {
-        __Ownable_init(msg.sender);
+        __AccessControl_init();
+
+        // Automatically grant all administrative and operational roles to the contract deployer
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(KYC_MANAGER_ROLE, msg.sender);
+        _grantRole(OPERATOR_ROLE, msg.sender);
         
         // Automatically whitelist the contract deployer as a system wallet
         isSystemWallet[msg.sender] = true;
     }
 
-    function registerIdentity(address investor, bool status) external onlyOwner {
+    function registerIdentity(address investor, bool status) external onlyRole(KYC_MANAGER_ROLE) {
         if (investor == address(0)) revert InvalidAddress();
         _registry[investor].isVerified = status;
         emit IdentityUpdated(investor, status, msg.sender);
     }
 
-    function batchRegisterIdentity(address[] calldata investors, bool status) external onlyOwner {
+    function batchRegisterIdentity(address[] calldata investors, bool status) external onlyRole(KYC_MANAGER_ROLE) {
         for (uint256 i = 0; i < investors.length; i++) {
             if (investors[i] == address(0)) revert InvalidAddress();
             _registry[investors[i]].isVerified = status;
@@ -66,20 +74,20 @@ contract RemzikIdentityRegistry is Initializable, UUPSUpgradeable, OwnableUpgrad
     }
 
     // Phase 10: Set the authorized RecoveryManager contract address
-    function setRecoveryManager(address _recoveryManager) external onlyOwner {
+    function setRecoveryManager(address _recoveryManager) external onlyRole(OPERATOR_ROLE) {
         if (_recoveryManager == address(0)) revert InvalidAddress();
         recoveryManager = _recoveryManager;
         emit RecoveryManagerUpdated(_recoveryManager, msg.sender);
     }
 
-    function toggleFreeze(address investor, bool freezeStatus) external onlyOwner {
+    function toggleFreeze(address investor, bool freezeStatus) external onlyRole(KYC_MANAGER_ROLE) {
         if (investor == address(0)) revert InvalidAddress();
         _registry[investor].isFrozen = freezeStatus;
         emit IdentityFreezeToggled(investor, freezeStatus, msg.sender);
     }
 
-    /// @notice Allows the owner to designate infrastructure wallets (like Treasuries or Factories)
-    function setSystemWallet(address wallet, bool status) external onlyOwner {
+    /// @notice Allows designated OPERATOR_ROLE to configure infrastructure wallets (like Treasuries or Factories)
+    function setSystemWallet(address wallet, bool status) external onlyRole(OPERATOR_ROLE) {
         if (wallet == address(0)) revert InvalidAddress();
         isSystemWallet[wallet] = status;
         emit SystemWalletUpdated(wallet, status, msg.sender);
@@ -103,8 +111,8 @@ contract RemzikIdentityRegistry is Initializable, UUPSUpgradeable, OwnableUpgrad
     }
 
     // Required by UUPSUpgradeable
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     // Storage gap for future upgrades safety
-    uint256[49] private __gap;
+    uint256[48] private __gap;
 }

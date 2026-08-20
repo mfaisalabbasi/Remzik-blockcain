@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 
 interface ITokenDeployer {
     function deployToken(bytes memory creationCode, bytes memory constructorArgs) external returns (address);
@@ -23,7 +23,9 @@ interface IPropertyGovernance {
     function transferOwnership(address newOwner) external;
 }
 
-contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, OwnableUpgradeable {
+contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, AccessControlUpgradeable {
+    bytes32 public constant ASSET_DEPLOYER_ROLE = keccak256("ASSET_DEPLOYER_ROLE");
+
     event AssetPodDeployed(
         address indexed tokenAddress,
         address indexed treasuryAddress,
@@ -31,7 +33,7 @@ contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, OwnableUpgra
         string name
     );
 
-    // State variables (Must maintain order in future upgrades)
+    // State variables (Maintain order for storage safety)
     address public registry;
     address public recoveryManager;
     address public tokenDeployer;
@@ -47,9 +49,13 @@ contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, OwnableUpgra
         address _recoveryManager,
         address _tokenDeployer,
         address _govDeployer,
-        address initialOwner
+        address initialAdmin
     ) external initializer {
-        __Ownable_init(initialOwner);
+        require(initialAdmin != address(0), "Invalid admin");
+        __AccessControl_init();
+
+        _grantRole(DEFAULT_ADMIN_ROLE, initialAdmin);
+        _grantRole(ASSET_DEPLOYER_ROLE, initialAdmin);
 
         registry = _registry;
         recoveryManager = _recoveryManager;
@@ -57,7 +63,7 @@ contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, OwnableUpgra
         govDeployer = _govDeployer;
     }
 
-    function setDeployers(address _tokenDeployer, address _govDeployer) external onlyOwner {
+    function setDeployers(address _tokenDeployer, address _govDeployer) external onlyRole(DEFAULT_ADMIN_ROLE) {
         tokenDeployer = _tokenDeployer;
         govDeployer = _govDeployer;
     }
@@ -70,7 +76,7 @@ contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, OwnableUpgra
         string memory name,
         address treasury,
         address /* admin */
-    ) external onlyOwner returns (address, address, address) {
+    ) external onlyRole(ASSET_DEPLOYER_ROLE) returns (address, address, address) {
 
         // 1. Deploy Token dynamically
         address newToken = ITokenDeployer(tokenDeployer).deployToken(tokenCreationCode, tokenArgs);
@@ -91,10 +97,13 @@ contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, OwnableUpgra
         return (newToken, treasury, newGovernance);
     }
 
-    function transferGovernanceOwnership(address govAddress, address newOwner) external onlyOwner {
+    function transferGovernanceOwnership(address govAddress, address newOwner) external onlyRole(DEFAULT_ADMIN_ROLE) {
         IPropertyGovernance(govAddress).transferOwnership(newOwner);
     }
 
     // Required by UUPS standard to authorize code upgrades
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+
+    // Storage gap for future upgrades
+    uint256[48] private __gap;
 }
