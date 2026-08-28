@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 
 interface ITokenDeployer {
@@ -38,6 +39,10 @@ contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, AccessContro
     address public recoveryManager;
     address public tokenDeployer;
     address public govDeployer;
+    address public treasuryVaultImplementation;
+    
+    // Default stablecoin address to auto-whitelist on newly deployed property vaults
+    address public defaultStablecoin;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -68,14 +73,23 @@ contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, AccessContro
         govDeployer = _govDeployer;
     }
 
+    function setTreasuryVaultImplementation(address _treasuryVaultImplementation) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(_treasuryVaultImplementation != address(0), "Invalid address");
+        treasuryVaultImplementation = _treasuryVaultImplementation;
+    }
+
+    function setDefaultStablecoin(address _defaultStablecoin) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        defaultStablecoin = _defaultStablecoin;
+    }
+
     function deployAssetWithBytecode(
         bytes memory tokenCreationCode,
         bytes memory tokenArgs,
         bytes memory govCreationCode,
         bytes memory govArgs,
         string memory name,
-        address treasury,
-        address /* admin */
+        bytes32 propertyId,
+        address admin
     ) external onlyRole(ASSET_DEPLOYER_ROLE) returns (address, address, address) {
 
         // 1. Deploy Token dynamically
@@ -84,17 +98,32 @@ contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, AccessContro
         // 2. Deploy Governance dynamically
         address newGovernance = IGovDeployer(govDeployer).deployGovernance(govCreationCode, govArgs);
 
-        // 3. BONDING: Grant Governance role to the PropertyGovernance contract
+        // 3. Deploy Engine 2: TreasuryVault Proxy dynamically (Atomically passing 5 parameters including defaultStablecoin)
+        address deployedTreasury = address(0);
+        if (treasuryVaultImplementation != address(0)) {
+            bytes memory vaultInitData = abi.encodeWithSignature(
+                "initialize(address,address,bytes32,address,address)", // 👈 Matches the 5-parameter TreasuryVault initializer
+                registry,
+                admin,
+                propertyId,
+                newToken,
+                defaultStablecoin // 👈 Atomically whitelisted on vault creation
+            );
+            ERC1967Proxy vaultProxy = new ERC1967Proxy(treasuryVaultImplementation, vaultInitData);
+            deployedTreasury = address(vaultProxy);
+        }
+
+        // 4. BONDING: Grant Governance role to the PropertyGovernance contract
         bytes32 govRole = IRemzikAssetToken(newToken).GOVERNANCE_ROLE();
         IRemzikAssetToken(newToken).grantRole(govRole, newGovernance);
 
-        // 4. BONDING: Automatically grant RECOVERY_ROLE to the RecoveryManager contract
+        // 5. BONDING: Automatically grant RECOVERY_ROLE to the RecoveryManager contract
         bytes32 recoveryRole = IRemzikAssetToken(newToken).RECOVERY_ROLE();
         IRemzikAssetToken(newToken).grantRole(recoveryRole, recoveryManager);
 
-        emit AssetPodDeployed(newToken, treasury, newGovernance, name);
+        emit AssetPodDeployed(newToken, deployedTreasury, newGovernance, name);
 
-        return (newToken, treasury, newGovernance);
+        return (newToken, deployedTreasury, newGovernance);
     }
 
     function transferGovernanceOwnership(address govAddress, address newOwner) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -105,5 +134,5 @@ contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, AccessContro
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     // Storage gap for future upgrades
-    uint256[48] private __gap;
+    uint256[46] private __gap;
 }
