@@ -144,6 +144,19 @@ async function main() {
   // 10. Post-Deployment Configuration & RBAC Bindings
   console.log("\n--- Post-Deployment Configuration ---");
 
+  // Ensure deployer explicitly holds required roles on Identity Registry before cross-calls
+  const kycManagerRole = await registry.KYC_MANAGER_ROLE();
+  const operatorRole = await registry.OPERATOR_ROLE();
+
+  if (!(await registry.hasRole(kycManagerRole, deployer.address))) {
+    let txRole = await registry.grantRole(kycManagerRole, deployer.address);
+    await txRole.wait();
+  }
+  if (!(await registry.hasRole(operatorRole, deployer.address))) {
+    let txRole = await registry.grantRole(operatorRole, deployer.address);
+    await txRole.wait();
+  }
+
   // Bind RecoveryManager inside Identity Registry
   let tx = await registry.setRecoveryManager(recoveryManagerAddress);
   await tx.wait();
@@ -163,6 +176,13 @@ async function main() {
   await tx.wait();
   console.log(
     "-> Default MockUSDC registered in AssetFactory for auto-whitelisting!",
+  );
+
+  // Configure marketplace reference inside AssetFactory so new assets auto-whitelist marketplace for compliance bypass
+  tx = await factory.setMarketplace(marketplaceAddress);
+  await tx.wait();
+  console.log(
+    "-> RemzikMarketplace linked to AssetFactory for automated compliance bypass!",
   );
 
   // --- SUMMARY ---

@@ -17,7 +17,7 @@ interface IPriceOracle {
 
 /**
  * @title RemzikMarketplace
- * @notice UUPS Upgradeable production version: Balance Checks + Allowance Gating + Price Banding + Strict Liquidation Shield.
+ * @notice UUPS Upgradeable production version: Balance Checks + Allowance Gating + Price Banding + Strict Liquidation Shield + Atomic On-Chain Settlement.
  */
 contract RemzikMarketplace is Initializable, UUPSUpgradeable, OwnableUpgradeable {
     using SafeERC20 for IERC20;
@@ -42,6 +42,14 @@ contract RemzikMarketplace is Initializable, UUPSUpgradeable, OwnableUpgradeable
     event ListingCreated(string indexed listingId, address indexed seller, address token, uint256 amount);
     event ListingCancelled(string indexed listingId, address indexed seller);
     event TradeExecuted(string indexed listingId, address indexed seller, address indexed buyer, uint256 amount);
+    event OnChainTradeExecuted(
+        string indexed listingId, 
+        address indexed seller, 
+        address indexed buyer, 
+        address paymentToken,
+        uint256 paymentAmount,
+        uint256 tokenAmount
+    );
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -76,7 +84,11 @@ contract RemzikMarketplace is Initializable, UUPSUpgradeable, OwnableUpgradeable
         (uint256 minPerToken, uint256 maxPerToken) = priceOracle.getPriceBand(token);
         require(amount > 0, "Invalid amount");
 
-        uint256 pricePerToken = (totalTradePrice * 1e18) / amount; 
+        // Normalize 6-decimal payment amount (e.g., USDC) to 18-decimal precision 
+        // to match the oracle's 18-decimal price band expectation.
+        uint256 normalizedPrice = totalTradePrice * 1e12; 
+
+        uint256 pricePerToken = (normalizedPrice * 1e18) / amount; 
         uint256 buffer = minPerToken / 100; // 1% buffer
         
         uint256 effectiveMin = (minPerToken > buffer) ? (minPerToken - buffer) : 0;
@@ -106,7 +118,7 @@ contract RemzikMarketplace is Initializable, UUPSUpgradeable, OwnableUpgradeable
         emit ListingCancelled(listingId, listing.seller);
     }
 
-    // --- SETTLEMENT LOGIC ---
+    // --- SETTLEMENT LOGIC (OFF-CHAIN EXISTING) ---
     function settleTrade(
         string calldata listingId, 
         address seller, 
@@ -131,6 +143,51 @@ contract RemzikMarketplace is Initializable, UUPSUpgradeable, OwnableUpgradeable
         IERC20(listing.token).safeTransferFrom(seller, buyer, listing.amount);
 
         emit TradeExecuted(listingId, seller, buyer, listing.amount);
+    }
+
+    // --- SETTLEMENT LOGIC (NEW ON-CHAIN ATOMIC) ---
+    /**
+     * @notice Executes atomic on-chain secondary trade: Payment token (e.g., USDC) moves from Buyer to Seller,
+     *         and Asset Tokens move from Seller to Buyer inside a single transaction.
+     */
+    function executeOnChainTrade(
+        string calldata listingId,
+        address paymentToken,
+        uint256 paymentAmount
+    ) external nonReentrant {
+        Listing storage listing = listings[listingId];
+        
+        require(listing.active, "Listing inactive");
+        require(msg.sender != listing.seller, "Seller cannot buy own listing");
+        require(registry.isClearToTrade(msg.sender), "Buyer not verified");
+        require(registry.isClearToTrade(listing.seller), "Seller not verified");
+
+        // Emergency Liquidation Shield check on the asset token
+        (bool success, bytes memory data) = listing.token.staticcall(abi.encodeWithSignature("paused()"));
+        require(success, "Marketplace: Failed to check token pause status");
+        bool isPaused = abi.decode(data, (bool));
+        require(!isPaused, "Marketplace: Token is paused due to emergency liquidation");
+
+        // Validate price band using the listing amount and offered payment amount
+        _checkPriceBand(listing.token, paymentAmount, listing.amount);
+
+        // Deactivate listing immediately to prevent re-entrancy / double-spending
+        listing.active = false;
+
+        // 1. Transfer Payment Token (e.g., MockUSDC) from Buyer -> Seller
+        IERC20(paymentToken).safeTransferFrom(msg.sender, listing.seller, paymentAmount);
+
+        // 2. Transfer Asset Tokens from Seller -> Buyer
+        IERC20(listing.token).safeTransferFrom(listing.seller, msg.sender, listing.amount);
+
+        emit OnChainTradeExecuted(
+            listingId,
+            listing.seller,
+            msg.sender,
+            paymentToken,
+            paymentAmount,
+            listing.amount
+        );
     }
 
     // --- UTILS ---

@@ -18,6 +18,7 @@ interface IRemzikAssetToken {
     function grantRole(bytes32 role, address account) external;
     function GOVERNANCE_ROLE() external view returns (bytes32);
     function RECOVERY_ROLE() external view returns (bytes32);
+    function COMPLIANCE_BYPASS_ROLE() external view returns (bytes32);
 }
 
 interface IPropertyGovernance {
@@ -43,6 +44,9 @@ contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, AccessContro
     
     // Default stablecoin address to auto-whitelist on newly deployed property vaults
     address public defaultStablecoin;
+    
+    // Marketplace address to auto-grant compliance bypass role on newly deployed asset tokens
+    address public marketplace;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -82,6 +86,11 @@ contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, AccessContro
         defaultStablecoin = _defaultStablecoin;
     }
 
+    function setMarketplace(address _marketplace) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(_marketplace != address(0), "Invalid marketplace address");
+        marketplace = _marketplace;
+    }
+
     function deployAssetWithBytecode(
         bytes memory tokenCreationCode,
         bytes memory tokenArgs,
@@ -102,12 +111,12 @@ contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, AccessContro
         address deployedTreasury = address(0);
         if (treasuryVaultImplementation != address(0)) {
             bytes memory vaultInitData = abi.encodeWithSignature(
-                "initialize(address,address,bytes32,address,address)", // 👈 Matches the 5-parameter TreasuryVault initializer
+                "initialize(address,address,bytes32,address,address)", 
                 registry,
                 admin,
                 propertyId,
                 newToken,
-                defaultStablecoin // 👈 Atomically whitelisted on vault creation
+                defaultStablecoin 
             );
             ERC1967Proxy vaultProxy = new ERC1967Proxy(treasuryVaultImplementation, vaultInitData);
             deployedTreasury = address(vaultProxy);
@@ -121,6 +130,12 @@ contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, AccessContro
         bytes32 recoveryRole = IRemzikAssetToken(newToken).RECOVERY_ROLE();
         IRemzikAssetToken(newToken).grantRole(recoveryRole, recoveryManager);
 
+        // 6. BONDING: Automatically grant COMPLIANCE_BYPASS_ROLE to the Marketplace contract
+        if (marketplace != address(0)) {
+            bytes32 bypassRole = IRemzikAssetToken(newToken).COMPLIANCE_BYPASS_ROLE();
+            IRemzikAssetToken(newToken).grantRole(bypassRole, marketplace);
+        }
+
         emit AssetPodDeployed(newToken, deployedTreasury, newGovernance, name);
 
         return (newToken, deployedTreasury, newGovernance);
@@ -133,6 +148,6 @@ contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, AccessContro
     // Required by UUPS standard to authorize code upgrades
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
-    // Storage gap for future upgrades
-    uint256[46] private __gap;
+    // Storage gap for future upgrades (adjusted slot allocation down by 1 to accommodate the new marketplace state variable)
+    uint256[45] private __gap;
 }
