@@ -16,13 +16,17 @@ interface IGovDeployer {
 
 interface IRemzikAssetToken {
     function grantRole(bytes32 role, address account) external;
+    function revokeRole(bytes32 role, address account) external;
+    function mint(address to, uint256 amount) external;
     function GOVERNANCE_ROLE() external view returns (bytes32);
     function RECOVERY_ROLE() external view returns (bytes32);
     function COMPLIANCE_BYPASS_ROLE() external view returns (bytes32);
+    function MINTER_ROLE() external view returns (bytes32);
 }
 
 interface IPropertyGovernance {
     function transferOwnership(address newOwner) external;
+    function setToken(address _token) external;
 }
 
 contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, AccessControlUpgradeable {
@@ -35,17 +39,12 @@ contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, AccessContro
         string name
     );
 
-    // State variables (Maintain order for storage safety)
     address public registry;
     address public recoveryManager;
     address public tokenDeployer;
     address public govDeployer;
     address public treasuryVaultImplementation;
-    
-    // Default stablecoin address to auto-whitelist on newly deployed property vaults
     address public defaultStablecoin;
-    
-    // Marketplace address to auto-grant compliance bypass role on newly deployed asset tokens
     address public marketplace;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -91,23 +90,27 @@ contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, AccessContro
         marketplace = _marketplace;
     }
 
+    /**
+     * @notice Dynamically deploys an asset pod. 
+     */
     function deployAssetWithBytecode(
         bytes memory tokenCreationCode,
         bytes memory tokenArgs,
         bytes memory govCreationCode,
         bytes memory govArgs,
         string memory name,
+        uint256 totalSharesWei,
         bytes32 propertyId,
         address admin
     ) external onlyRole(ASSET_DEPLOYER_ROLE) returns (address, address, address) {
 
-        // 1. Deploy Token dynamically
-        address newToken = ITokenDeployer(tokenDeployer).deployToken(tokenCreationCode, tokenArgs);
-
-        // 2. Deploy Governance dynamically
+        // 1. Deploy Governance first so its address is available
         address newGovernance = IGovDeployer(govDeployer).deployGovernance(govCreationCode, govArgs);
 
-        // 3. Deploy Engine 2: TreasuryVault Proxy dynamically (Atomically passing 5 parameters including defaultStablecoin)
+        // 2. Deploy Token dynamically
+        address newToken = ITokenDeployer(tokenDeployer).deployToken(tokenCreationCode, tokenArgs);
+
+        // 3. Deploy Engine 2: TreasuryVault Proxy dynamically & Auto-Whitelist on Registry
         address deployedTreasury = address(0);
         if (treasuryVaultImplementation != address(0)) {
             bytes memory vaultInitData = abi.encodeWithSignature(
@@ -120,21 +123,39 @@ contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, AccessContro
             );
             ERC1967Proxy vaultProxy = new ERC1967Proxy(treasuryVaultImplementation, vaultInitData);
             deployedTreasury = address(vaultProxy);
+
+            // 🛡️ COMPLIANCE FIX: Call registerTreasuryByFactory which checks ASSET_FACTORY_ROLE
+            (bool success, ) = registry.call(
+                abi.encodeWithSignature("registerTreasuryByFactory(address)", deployedTreasury)
+            );
+            require(success, "Factory: Failed to auto-whitelist treasury vault");
         }
 
-        // 4. BONDING: Grant Governance role to the PropertyGovernance contract
+        // 4. ATOMIC MINTING: Mint total supply directly into the deployed Treasury Vault proxy
+        if (deployedTreasury != address(0) && totalSharesWei > 0) {
+            IRemzikAssetToken(newToken).mint(deployedTreasury, totalSharesWei);
+        }
+
+        // 5. SECURITY LOCKDOWN: Revoke factory's temporary MINTER_ROLE safely using factory's temporary ADMIN role
+        bytes32 minterRole = IRemzikAssetToken(newToken).MINTER_ROLE();
+        IRemzikAssetToken(newToken).revokeRole(minterRole, address(this));
+
+        // 6. BONDING: Grant Governance role to the PropertyGovernance contract
         bytes32 govRole = IRemzikAssetToken(newToken).GOVERNANCE_ROLE();
         IRemzikAssetToken(newToken).grantRole(govRole, newGovernance);
 
-        // 5. BONDING: Automatically grant RECOVERY_ROLE to the RecoveryManager contract
+        // 7. BONDING: Automatically grant RECOVERY_ROLE to the RecoveryManager contract
         bytes32 recoveryRole = IRemzikAssetToken(newToken).RECOVERY_ROLE();
         IRemzikAssetToken(newToken).grantRole(recoveryRole, recoveryManager);
 
-        // 6. BONDING: Automatically grant COMPLIANCE_BYPASS_ROLE to the Marketplace contract
+        // 8. BONDING: Automatically grant COMPLIANCE_BYPASS_ROLE to the Marketplace contract
         if (marketplace != address(0)) {
             bytes32 bypassRole = IRemzikAssetToken(newToken).COMPLIANCE_BYPASS_ROLE();
             IRemzikAssetToken(newToken).grantRole(bypassRole, marketplace);
         }
+
+        // 9. BONDING: Link the deployed token address back to PropertyGovernance so voting/liquidation works properly
+        IPropertyGovernance(newGovernance).setToken(newToken);
 
         emit AssetPodDeployed(newToken, deployedTreasury, newGovernance, name);
 
@@ -145,9 +166,7 @@ contract AssetFactoryUpgradeable is Initializable, UUPSUpgradeable, AccessContro
         IPropertyGovernance(govAddress).transferOwnership(newOwner);
     }
 
-    // Required by UUPS standard to authorize code upgrades
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
-    // Storage gap for future upgrades (adjusted slot allocation down by 1 to accommodate the new marketplace state variable)
     uint256[45] private __gap;
 }

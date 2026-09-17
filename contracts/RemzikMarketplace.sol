@@ -118,7 +118,7 @@ contract RemzikMarketplace is Initializable, UUPSUpgradeable, OwnableUpgradeable
         emit ListingCancelled(listingId, listing.seller);
     }
 
-    // --- SETTLEMENT LOGIC (OFF-CHAIN EXISTING) ---
+    // --- SETTLEMENT LOGIC (OFF-CHAIN MATCHED) ---
     function settleTrade(
         string calldata listingId, 
         address seller, 
@@ -131,6 +131,11 @@ contract RemzikMarketplace is Initializable, UUPSUpgradeable, OwnableUpgradeable
         require(listing.seller == seller, "Seller mismatch");
         require(buyer != address(0), "Invalid buyer");
         
+        // 🛡️ Strict Compliance Verification for both parties (since Marketplace bypasses token-level checks)
+        require(registry.isClearToTrade(buyer), "Buyer not verified");
+        require(registry.isClearToTrade(seller), "Seller not verified");
+
+        // Emergency Liquidation Shield check
         (bool success, bytes memory data) = listing.token.staticcall(abi.encodeWithSignature("paused()"));
         require(success, "Marketplace: Failed to check token pause status");
         bool isPaused = abi.decode(data, (bool));

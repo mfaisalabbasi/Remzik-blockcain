@@ -15,6 +15,7 @@ contract RemzikAssetToken is ERC20, ERC20Permit, ERC20Votes, AccessControl, Paus
     bytes32 public constant COMPLIANCE_BYPASS_ROLE = keccak256("COMPLIANCE_BYPASS_ROLE");
     bytes32 public constant GOVERNANCE_ROLE = keccak256("GOVERNANCE_ROLE");
     bytes32 public constant RECOVERY_ROLE = keccak256("RECOVERY_ROLE"); // Phase 10: Role for RecoveryManager
+    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");     // Pattern 1: Factory Minting Role
     
     IIdentityRegistry public immutable registry;
     string public metadataHash;
@@ -28,20 +29,30 @@ contract RemzikAssetToken is ERC20, ERC20Permit, ERC20Votes, AccessControl, Paus
     constructor(
         string memory name,
         string memory symbol,
-        uint256 supply,
         string memory _metadataHash,
         address _registry,
-        address _treasury,
-        address _admin
+        address _admin,
+        address _factory // Accepts factory address to securely assign roles on deployment
     ) ERC20(name, symbol) ERC20Permit(name) {
         registry = IIdentityRegistry(_registry);
         metadataHash = _metadataHash;
         
-        // Grant admin rights to AssetFactory so it can assign GOVERNANCE_ROLE & RECOVERY_ROLE
+        // Grant primary admin rights to the provided admin address
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
-        _grantRole(COMPLIANCE_BYPASS_ROLE, _treasury);
         
-        _mint(_treasury, supply);
+        // Grant MINTER_ROLE directly to the specified AssetFactory contract proxy
+        _grantRole(MINTER_ROLE, _factory);
+
+        // 🛡️ FIX: Grant temporary DEFAULT_ADMIN_ROLE to the factory so it has permission 
+        // to revoke its own MINTER_ROLE during the atomic deployment sequence.
+        _grantRole(DEFAULT_ADMIN_ROLE, _factory);
+    }
+
+    /**
+     * @notice Allows the factory (holding MINTER_ROLE) to mint total shares directly into the treasury vault.
+     */
+    function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) {
+        _mint(to, amount);
     }
 
     // Phase 9: Kill-Switch triggered by PropertyGovernance

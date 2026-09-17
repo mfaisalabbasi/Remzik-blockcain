@@ -63,6 +63,9 @@ contract PriceOracle is AccessControl {
         require(tokens.length == lowerBounds.length && tokens.length == upperBounds.length, "Array mismatch");
         
         for (uint256 i = 0; i < tokens.length; i++) {
+            require(tokens[i] != address(0), "Invalid token");
+            require(lowerBounds[i] > 0 && lowerBounds[i] <= upperBounds[i], "Invalid bounds"); // 🛡️ Added missing safety check
+            
             bands[tokens[i]] = PriceBand(lowerBounds[i], upperBounds[i], block.timestamp, true);
             emit BandUpdated(tokens[i], lowerBounds[i], upperBounds[i], block.timestamp);
         }

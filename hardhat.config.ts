@@ -6,10 +6,25 @@ export default defineConfig({
   plugins: [hardhatToolboxMochaEthersPlugin, hardhatUpgrades],
   solidity: {
     profiles: {
-      default: { version: "0.8.28" },
+      default: {
+        version: "0.8.28",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+          viaIR: true, // 👈 Fixes stack-too-deep for local compilation & testing
+        },
+      },
       production: {
         version: "0.8.28",
-        settings: { optimizer: { enabled: true, runs: 1 } },
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+          viaIR: true, // 👈 Fixes stack-too-deep for production deployments
+        },
       },
     },
   },

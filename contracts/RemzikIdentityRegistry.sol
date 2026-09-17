@@ -8,6 +8,7 @@ import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol"
 contract RemzikIdentityRegistry is Initializable, UUPSUpgradeable, AccessControlUpgradeable {
     bytes32 public constant KYC_MANAGER_ROLE = keccak256("KYC_MANAGER_ROLE");
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+    bytes32 public constant ASSET_FACTORY_ROLE = keccak256("ASSET_FACTORY_ROLE"); // 👈 Added factory role
 
     address public recoveryManager; // Phase 10: Authorized RecoveryManager contract address
 
@@ -47,6 +48,7 @@ contract RemzikIdentityRegistry is Initializable, UUPSUpgradeable, AccessControl
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(KYC_MANAGER_ROLE, msg.sender);
         _grantRole(OPERATOR_ROLE, msg.sender);
+        _grantRole(ASSET_FACTORY_ROLE, msg.sender); // 👈 Grant factory role initially to deployer/admin
         
         // Automatically whitelist the contract deployer as a system wallet
         isSystemWallet[msg.sender] = true;
@@ -56,6 +58,15 @@ contract RemzikIdentityRegistry is Initializable, UUPSUpgradeable, AccessControl
         if (investor == address(0)) revert InvalidAddress();
         _registry[investor].isVerified = status;
         emit IdentityUpdated(investor, status, msg.sender);
+    }
+
+    /**
+     * @notice Allows the authorized AssetFactory contract to atomically whitelist a newly deployed treasury vault.
+     */
+    function registerTreasuryByFactory(address treasuryVault) external onlyRole(ASSET_FACTORY_ROLE) {
+        if (treasuryVault == address(0)) revert InvalidAddress();
+        _registry[treasuryVault].isVerified = true;
+        emit IdentityUpdated(treasuryVault, true, msg.sender);
     }
 
     function batchRegisterIdentity(address[] calldata investors, bool status) external onlyRole(KYC_MANAGER_ROLE) {
@@ -114,5 +125,5 @@ contract RemzikIdentityRegistry is Initializable, UUPSUpgradeable, AccessControl
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     // Storage gap for future upgrades safety
-    uint256[48] private __gap;
+    uint256[47] private __gap; // Adjusted to account for added variable/role state if any, though gap math remains safe
 }

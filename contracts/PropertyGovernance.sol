@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
@@ -26,6 +26,7 @@ contract PropertyGovernance is Ownable {
     event Voted(uint256 indexed proposalId, address voter, bool support, uint256 weight);
     event ProposalExecuted(uint256 indexed proposalId, string action);
     event LiquidationActivated(address indexed tokenAddress);
+    event TokenLinked(address indexed tokenAddress); // 👈 Added clarity event
 
     constructor(
         address _factory, 
@@ -35,13 +36,16 @@ contract PropertyGovernance is Ownable {
     ) Ownable(_admin) {
         factory = _factory;
         treasury = _treasury;
-        token = ERC20Votes(_token);
+        if (_token != address(0)) {
+            token = ERC20Votes(_token);
+        }
     }
 
     function setToken(address _token) external {
         require(msg.sender == factory || msg.sender == owner(), "Unauthorized");
         require(address(token) == address(0), "Governance: Token already linked");
         token = ERC20Votes(_token);
+        emit TokenLinked(_token); // 👈 Emits event when linked successfully
     }
 
     function createProposal(string memory _description, uint256 _duration) external onlyOwner {
@@ -73,7 +77,6 @@ contract PropertyGovernance is Ownable {
         emit Voted(_proposalId, msg.sender, _support, weight);
     }
 
-    // REMOVED onlyOwner so execution can be called by anyone once conditions are met
     function executeProposal(uint256 _proposalId) external {
         Proposal storage p = proposals[_proposalId];
         require(p.exists, "Proposal: Does not exist");
@@ -102,7 +105,6 @@ contract PropertyGovernance is Ownable {
         emit ProposalExecuted(_proposalId, p.description);
     }
 
-    // 🚨 EMERGENCY DIRECT KILL-SWITCH (Bypasses voting delay for instant liquidation)
     function emergencyLiquidate() external onlyOwner {
         require(address(token) != address(0), "Governance: Token not linked");
         

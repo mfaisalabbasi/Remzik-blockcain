@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -9,11 +9,6 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 interface IRemzikIdentityRegistry {
     function isClearToTrade(address investor) external view returns (bool);
-}
-
-// Interface to interact with the property token for transfers
-interface IRemzikAssetToken {
-    function transfer(address to, uint256 amount) external returns (bool);
 }
 
 contract TreasuryVault is Initializable, UUPSUpgradeable, AccessControlUpgradeable {
@@ -55,7 +50,7 @@ contract TreasuryVault is Initializable, UUPSUpgradeable, AccessControlUpgradeab
         address _admin,
         bytes32 _propertyId,
         address _assetToken,
-        address _defaultStablecoin // 👈 Added: Atomic auto-whitelisting parameter
+        address _defaultStablecoin
     ) public initializer {
         __AccessControl_init();
 
@@ -91,7 +86,7 @@ contract TreasuryVault is Initializable, UUPSUpgradeable, AccessControlUpgradeab
      */
     function deposit(address stablecoin, uint256 amount) external {
         require(acceptedStablecoins[stablecoin], "Stablecoin not accepted");
-        require(amount > 0, "Amount must be zero");
+        require(amount > 0, "Amount must be greater than zero"); // 👈 Fixed error string mismatch
         require(assetToken != address(0), "Asset token not configured");
 
         // Gated by Engine 1 Compliance Registry
@@ -100,16 +95,16 @@ contract TreasuryVault is Initializable, UUPSUpgradeable, AccessControlUpgradeab
             "TreasuryVault: Investor not KYC verified"
         );
 
-        // 1. Pull stablecoins from investor into Vault treasury
+        // 1. Pull stablecoins from investor into Vault treasury safely
         IERC20(stablecoin).safeTransferFrom(msg.sender, address(this), amount);
         
         totalVaultDeposits += amount;
 
-        // 2. Calculate fractional tokens (adjust scaling depending on your token decimals/price ratio)
-        uint256 tokensToTransfer = amount; // e.g. 1:1 ratio representation
+        // 2. Calculate fractional tokens ratio (1:1 representation scale)
+        uint256 tokensToTransfer = amount; 
 
-        // 3. Transfer fractional property tokens from vault holding to the investor
-        IRemzikAssetToken(assetToken).transfer(msg.sender, tokensToTransfer);
+        // 3. Transfer fractional property tokens from vault holding to the investor using SafeERC20
+        IERC20(assetToken).safeTransfer(msg.sender, tokensToTransfer);
 
         emit StablecoinDeposited(
             msg.sender,
