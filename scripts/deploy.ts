@@ -119,6 +119,20 @@ async function main() {
     const marketplaceAddress = await marketplace.getAddress();
     console.log("-> RemzikMarketplace Proxy deployed to:", marketplaceAddress);
 
+    // 🛡️ Whitelist MockUSDC as an accepted payment token in the Marketplace
+    tx = await marketplace.setPaymentTokenStatus(mockUSDCAddress, true);
+    await tx.wait();
+    console.log(
+      "-> MockUSDC whitelisted as an accepted payment token in RemzikMarketplace!",
+    );
+
+    // 🛡️ Whitelist RemzikMarketplace address in IdentityRegistry so escrow transfers pass compliance checks
+    tx = await registry.setVerificationStatus(marketplaceAddress, true);
+    await tx.wait();
+    console.log(
+      "-> RemzikMarketplace successfully verified in IdentityRegistry!",
+    );
+
     // 8. Deploy Engine 2 TreasuryVault (Implementation Logic Contract)
     console.log("\n[7/8] Deploying TreasuryVault Implementation...");
     const TreasuryVault = await ethers.getContractFactory("TreasuryVault");

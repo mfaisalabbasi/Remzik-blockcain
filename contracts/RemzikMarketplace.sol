@@ -17,7 +17,7 @@ interface IPriceOracle {
 
 /**
  * @title RemzikMarketplace
- * @notice UUPS Upgradeable production version: Balance Checks + Allowance Gating + Price Banding + Strict Liquidation Shield + Atomic On-Chain Settlement.
+ * @notice UUPS Upgradeable production version with fixed-price escrow enforcement, payment whitelisting, and atomic settlement.
  */
 contract RemzikMarketplace is Initializable, UUPSUpgradeable, OwnableUpgradeable {
     using SafeERC20 for IERC20;
@@ -27,22 +27,31 @@ contract RemzikMarketplace is Initializable, UUPSUpgradeable, OwnableUpgradeable
 
     struct Listing {
         address seller;
-        address token;
-        uint256 amount;
+        address token;          // Asset token contract address
+        address paymentToken;   // Accepted payment token (e.g., MockUSDC)
+        uint256 amount;         // Number of tokens listed
+        uint256 pricePerUnit;   // Fixed price per token unit (scaled to payment token decimals)
         bool active;
     }
 
     mapping(string => Listing) public listings;
+    mapping(address => bool) public acceptedPaymentTokens;
 
     // Custom reentrancy guard states for upgradeable safety
     uint256 private _status;
     uint256 private constant _NOT_ENTERED = 1;
     uint256 private constant _ENTERED = 2;
 
-    event ListingCreated(string indexed listingId, address indexed seller, address token, uint256 amount);
+    event ListingCreated(
+        string indexed listingId, 
+        address indexed seller, 
+        address token, 
+        address paymentToken, 
+        uint256 amount, 
+        uint256 pricePerUnit
+    );
     event ListingCancelled(string indexed listingId, address indexed seller);
-    event TradeExecuted(string indexed listingId, address indexed seller, address indexed buyer, uint256 amount);
-    event OnChainTradeExecuted(
+    event TradeExecuted(
         string indexed listingId, 
         address indexed seller, 
         address indexed buyer, 
@@ -71,7 +80,6 @@ contract RemzikMarketplace is Initializable, UUPSUpgradeable, OwnableUpgradeable
         priceOracle = IPriceOracle(_priceOracle);
     }
 
-    // --- CUSTOM REENTRANCY MODIFIER ---
     modifier nonReentrant() {
         require(_status != _ENTERED, "ReentrancyGuard: reentrant call");
         _status = _ENTERED;
@@ -79,123 +87,116 @@ contract RemzikMarketplace is Initializable, UUPSUpgradeable, OwnableUpgradeable
         _status = _NOT_ENTERED;
     }
 
-    // --- INTERNAL GUARDRAILS ---
-    function _checkPriceBand(address token, uint256 totalTradePrice, uint256 amount) internal view {
+    function setPaymentTokenStatus(address token, bool status) external onlyOwner {
+        require(token != address(0), "Invalid token address");
+        acceptedPaymentTokens[token] = status;
+    }
+
+   function _checkPriceBand(address token, uint256 totalTradePrice, uint256 amount) internal view {
         (uint256 minPerToken, uint256 maxPerToken) = priceOracle.getPriceBand(token);
         require(amount > 0, "Invalid amount");
 
-        // Normalize 6-decimal payment amount (e.g., USDC) to 18-decimal precision 
-        // to match the oracle's 18-decimal price band expectation.
-        uint256 normalizedPrice = totalTradePrice * 1e12; 
-
-        uint256 pricePerToken = (normalizedPrice * 1e18) / amount; 
-        uint256 buffer = minPerToken / 100; // 1% buffer
+        // 🛡️ Fix: Remove the extra * 1e18 multiplication.
+        // totalTradePrice is in 6 decimals (USDC). Multiplying by 1e12 converts it to 18 decimals,
+        // which matches the 18-decimal scale set by OracleService.
+        uint256 pricePerToken = (totalTradePrice * 1e12) / amount; 
         
+        uint256 buffer = minPerToken / 100; // 1% buffer
         uint256 effectiveMin = (minPerToken > buffer) ? (minPerToken - buffer) : 0;
         uint256 effectiveMax = maxPerToken + buffer;
         
         require(pricePerToken >= effectiveMin && pricePerToken <= effectiveMax, "Price outside permitted band");
     }
 
-    // --- LISTING LOGIC ---
-    function createListing(string calldata listingId, address token, uint256 amount) external nonReentrant {
-        require(listings[listingId].seller == address(0), "Listing exists");
+    // --- LISTING LOGIC (WITH ESCROW) ---
+    function createListing(
+        string calldata listingId, 
+        address token, 
+        address paymentToken,
+        uint256 amount, 
+        uint256 pricePerUnit
+    ) external nonReentrant {
+        require(listings[listingId].seller == address(0), "Listing already exists");
         require(registry.isClearToTrade(msg.sender), "Seller not verified");
-        
-        require(IERC20(token).balanceOf(msg.sender) >= amount, "Insufficient token balance");
-        require(IERC20(token).allowance(msg.sender, address(this)) >= amount, "Insufficient allowance");
-        
-        listings[listingId] = Listing(msg.sender, token, amount, true);
-        emit ListingCreated(listingId, msg.sender, token, amount);
+        require(acceptedPaymentTokens[paymentToken], "Payment token not accepted");
+        require(amount > 0, "Amount must be greater than zero");
+        require(pricePerUnit > 0, "Price must be greater than zero");
+
+        // Transfer property tokens from seller into marketplace escrow contract
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+
+        listings[listingId] = Listing({
+            seller: msg.sender,
+            token: token,
+            paymentToken: paymentToken,
+            amount: amount,
+            pricePerUnit: pricePerUnit,
+            active: true
+        });
+
+        emit ListingCreated(listingId, msg.sender, token, paymentToken, amount, pricePerUnit);
     }
 
+    // --- CANCELLATION LOGIC (REFUND FROM ESCROW) ---
     function cancelListing(string calldata listingId) external nonReentrant {
         Listing storage listing = listings[listingId];
         require(listing.active, "Listing inactive");
         require(msg.sender == listing.seller || msg.sender == owner(), "Unauthorized");
 
         listing.active = false;
+
+        // Return escrowed tokens back to the seller
+        IERC20(listing.token).safeTransfer(listing.seller, listing.amount);
+
         emit ListingCancelled(listingId, listing.seller);
     }
 
-    // --- SETTLEMENT LOGIC (OFF-CHAIN MATCHED) ---
-    function settleTrade(
-        string calldata listingId, 
-        address seller, 
-        address buyer,
-        uint256 tradePrice 
-    ) external nonReentrant { 
-        Listing storage listing = listings[listingId];
-        
-        require(listing.active, "Listing inactive");
-        require(listing.seller == seller, "Seller mismatch");
-        require(buyer != address(0), "Invalid buyer");
-        
-        // 🛡️ Strict Compliance Verification for both parties (since Marketplace bypasses token-level checks)
-        require(registry.isClearToTrade(buyer), "Buyer not verified");
-        require(registry.isClearToTrade(seller), "Seller not verified");
-
-        // Emergency Liquidation Shield check
-        (bool success, bytes memory data) = listing.token.staticcall(abi.encodeWithSignature("paused()"));
-        require(success, "Marketplace: Failed to check token pause status");
-        bool isPaused = abi.decode(data, (bool));
-        require(!isPaused, "Marketplace: Token is paused due to emergency liquidation");
-        
-        _checkPriceBand(listing.token, tradePrice, listing.amount); 
-        
-        listing.active = false;
-        
-        IERC20(listing.token).safeTransferFrom(seller, buyer, listing.amount);
-
-        emit TradeExecuted(listingId, seller, buyer, listing.amount);
-    }
-
-    // --- SETTLEMENT LOGIC (NEW ON-CHAIN ATOMIC) ---
-    /**
-     * @notice Executes atomic on-chain secondary trade: Payment token (e.g., USDC) moves from Buyer to Seller,
-     *         and Asset Tokens move from Seller to Buyer inside a single transaction.
-     */
+    // --- ATOMIC ON-CHAIN SETTLEMENT ---
     function executeOnChainTrade(
         string calldata listingId,
-        address paymentToken,
-        uint256 paymentAmount
+        uint256 purchaseAmount
     ) external nonReentrant {
         Listing storage listing = listings[listingId];
         
         require(listing.active, "Listing inactive");
         require(msg.sender != listing.seller, "Seller cannot buy own listing");
+        require(purchaseAmount > 0 && purchaseAmount <= listing.amount, "Invalid purchase amount");
         require(registry.isClearToTrade(msg.sender), "Buyer not verified");
         require(registry.isClearToTrade(listing.seller), "Seller not verified");
 
-        // Emergency Liquidation Shield check on the asset token
+        // Emergency Liquidation Shield check on asset token
         (bool success, bytes memory data) = listing.token.staticcall(abi.encodeWithSignature("paused()"));
         require(success, "Marketplace: Failed to check token pause status");
         bool isPaused = abi.decode(data, (bool));
         require(!isPaused, "Marketplace: Token is paused due to emergency liquidation");
 
-        // Validate price band using the listing amount and offered payment amount
-        _checkPriceBand(listing.token, paymentAmount, listing.amount);
+        uint256 totalPayment = purchaseAmount * listing.pricePerUnit;
 
-        // Deactivate listing immediately to prevent re-entrancy / double-spending
-        listing.active = false;
+        // Verify price against Oracle bands
+        _checkPriceBand(listing.token, totalPayment, purchaseAmount);
 
-        // 1. Transfer Payment Token (e.g., MockUSDC) from Buyer -> Seller
-        IERC20(paymentToken).safeTransferFrom(msg.sender, listing.seller, paymentAmount);
+        if (purchaseAmount == listing.amount) {
+            listing.active = false;
+        } else {
+            listing.amount -= purchaseAmount;
+        }
 
-        // 2. Transfer Asset Tokens from Seller -> Buyer
-        IERC20(listing.token).safeTransferFrom(listing.seller, msg.sender, listing.amount);
+        // 1. Transfer Payment Token from Buyer to Seller
+        IERC20(listing.paymentToken).safeTransferFrom(msg.sender, listing.seller, totalPayment);
 
-        emit OnChainTradeExecuted(
+        // 2. Release Escrowed Asset Tokens from Marketplace to Buyer
+        IERC20(listing.token).safeTransfer(msg.sender, purchaseAmount);
+
+        emit TradeExecuted(
             listingId,
             listing.seller,
             msg.sender,
-            paymentToken,
-            paymentAmount,
-            listing.amount
+            listing.paymentToken,
+            totalPayment,
+            purchaseAmount
         );
     }
 
-    // --- UTILS ---
     function getListing(string calldata listingId) external view returns (Listing memory) {
         return listings[listingId];
     }
@@ -205,9 +206,36 @@ contract RemzikMarketplace is Initializable, UUPSUpgradeable, OwnableUpgradeable
         priceOracle = IPriceOracle(_newOracle);
     }
 
-    // --- UUPS AUTHORIZATION ---
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
-    // Storage gap for future upgrades safety
-    uint256[48] private __gap;
+    uint256[47] private __gap;
+
+    // --- OFF-CHAIN ESCROW ON-CHAIN RELEASE ---
+    function releaseOffChainEscrowTrade(
+        string calldata listingId,
+        address buyer,
+        uint256 tokenAmount
+    ) external onlyOwner nonReentrant {
+        Listing storage listing = listings[listingId];
+        require(listing.active, "Listing inactive");
+        require(tokenAmount > 0 && tokenAmount <= listing.amount, "Invalid token amount");
+
+        if (tokenAmount == listing.amount) {
+            listing.active = false;
+        } else {
+            listing.amount -= tokenAmount;
+        }
+
+        // Release escrowed asset tokens straight to the buyer (Payment was handled off-chain)
+        IERC20(listing.token).safeTransfer(buyer, tokenAmount);
+
+        emit TradeExecuted(
+            listingId,
+            listing.seller,
+            buyer,
+            address(0),
+            0,
+            tokenAmount
+        );
+    }
 }
