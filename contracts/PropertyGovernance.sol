@@ -2,7 +2,8 @@
 pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
+// Changed from ERC20Votes to standard IERC20 for clean balance checking
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract PropertyGovernance is Ownable {
     struct Proposal {
@@ -14,7 +15,7 @@ contract PropertyGovernance is Ownable {
         bool exists;
     }
 
-    ERC20Votes public token;
+    IERC20 public token;
     address public factory;
     address public treasury;
     
@@ -26,7 +27,7 @@ contract PropertyGovernance is Ownable {
     event Voted(uint256 indexed proposalId, address voter, bool support, uint256 weight);
     event ProposalExecuted(uint256 indexed proposalId, string action);
     event LiquidationActivated(address indexed tokenAddress);
-    event TokenLinked(address indexed tokenAddress); // 👈 Added clarity event
+    event TokenLinked(address indexed tokenAddress);
 
     constructor(
         address _factory, 
@@ -37,15 +38,15 @@ contract PropertyGovernance is Ownable {
         factory = _factory;
         treasury = _treasury;
         if (_token != address(0)) {
-            token = ERC20Votes(_token);
+            token = IERC20(_token);
         }
     }
 
     function setToken(address _token) external {
         require(msg.sender == factory || msg.sender == owner(), "Unauthorized");
         require(address(token) == address(0), "Governance: Token already linked");
-        token = ERC20Votes(_token);
-        emit TokenLinked(_token); // 👈 Emits event when linked successfully
+        token = IERC20(_token);
+        emit TokenLinked(_token);
     }
 
     function createProposal(string memory _description, uint256 _duration) external onlyOwner {
@@ -67,7 +68,8 @@ contract PropertyGovernance is Ownable {
         require(block.timestamp < p.deadline, "Proposal: Voting period ended");
         require(!hasVoted[_proposalId][msg.sender], "Proposal: Already voted");
 
-        uint256 weight = token.getVotes(msg.sender);
+        // 🛡️ Fintech-Grade Direct Balance Check (1 Token = 1 Vote)
+        uint256 weight = token.balanceOf(msg.sender);
         require(weight > 0, "Proposal: No voting power");
 
         if (_support) p.voteYes += weight;
