@@ -6,7 +6,7 @@ async function main() {
   const { ethers } = connection;
 
   // 2. Target investor wallet address
-  const investorWalletAddress = "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1";
+  const investorWalletAddress = "0xAcDd3ab548a90b949D63c95049C4CA1b55816499";
 
   // 3. The MockUSDC contract address from your deployment
   const mockUSDCAddress = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
